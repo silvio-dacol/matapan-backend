@@ -15,17 +15,16 @@ Categorize transactions, potentially using local AI
 Store the user's financial data locally
 Eventually provide a clean web interface for analysis
 
-The initial countries of interest are Italy, Sweden, and China, with the architecture designed to be extensible.
+The initial countries of interest are Italy, Sweden, Switzerland, and China, with the architecture designed to be extensible.
 
-2. Frontend and backend
+2. Frontend and Backend
 
 We decided that the application should have two repositories:
 
 matapan-backend
 matapan-frontend
-Backend
 
-Responsible for everything involving financial data and business logic:
+In particular the backend should be responsible for everything involving financial data and business logic:
 
 Database
 Transactions
@@ -353,3 +352,248 @@ If we freeze the decisions today, I'd describe Matapan as:
 A local-first financial analysis application with a React/TypeScript frontend, Python/FastAPI backend, SQLite database, local Ollama AI, extensible financial-data parsers, multi-currency support, and Docker-based deployment on a home server.
 
 That is the architecture I would use as the baseline before starting implementation.
+
+12. Database migrations
+
+Never assume the database schema will remain unchanged.
+
+Use Alembic for migrations. Each migration should be atomic and reversible.
+
+Example migration sequence:
+
+migration 001
+    currencies
+    institutions
+
+migration 002
+    accounts
+
+migration 003
+    transactions
+
+migration 004
+    categories
+
+migration 005
+    tags
+
+migration 006
+    budgets
+
+migration 007
+    assets
+    liabilities
+
+migration 008
+    ADD merchant TO transactions
+
+When releasing a new version:
+
+Old database
+     ↓
+migration
+     ↓
+New database
+
+The user's existing financial data remains intact.
+
+This is extremely important for a personal application because you don't want an update to destroy someone's historical financial data.
+
+Non-negotiable rules:
+
+Database migrations
+Backups before migrations
+Actual database never stored in Git
+Test migrations on a copy of real data
+
+13. User changes vs developer changes
+
+There are two completely different kinds of "changes":
+
+User changes (no migration required)
+
+For example:
+
+I renamed "Restaurants" to "Eating Out".
+
+UPDATE categories
+SET name = 'Eating Out'
+WHERE id = 12;
+
+Developer changes (migration required)
+
+For example:
+
+We decided that transactions need a merchant field.
+
+ALTER TABLE transactions ADD COLUMN merchant VARCHAR(200);
+
+This distinction makes the system much easier to maintain.
+
+14. Domain model hierarchy
+
+Design the database around stable financial concepts, not around what the frontend currently looks like.
+
+                    Institution
+                         │
+                         ▼
+                      Account
+                         │
+                         ▼
+                    Transaction
+                     /    |    \
+                    /     |     \
+                   ▼      ▼      ▼
+              Category  Currency  Merchant
+                                  │
+                                  ▼
+                                  Tags
+
+Core entities (stable concepts):
+
+Institution
+Account
+Transaction
+Category
+Merchant
+Tag
+Currency
+FxRate
+Budget
+Asset
+Liability
+ExchangeRate
+
+Additional concepts can be added independently without redesigning the core structure.
+
+15. IDs not names
+
+Always reference entities by ID, never by name.
+
+Good:
+
+transaction.category_id = 42
+
+Bad:
+
+transaction.category = "Food"
+
+If the user changes Food → Restaurants, all transactions remain correctly connected via category_id.
+
+This applies to:
+
+accounts
+institutions
+categories
+tags
+currencies
+users
+assets
+
+16. Audit and classification history
+
+For a financial application, track how transactions got their classification.
+
+transaction
+    classification_source: enum(imported, ai, rule, manual)
+
+Suppose you import a transaction:
+
+Uber
+CHF 32.50
+Transport
+
+Then AI classifies it as:
+
+Travel
+
+Then you manually change it to:
+
+Transport
+
+Matapan can eventually learn that preference:
+
+"I manually changed this merchant to Transport three times."
+
+Matapan could eventually learn that preference and auto-apply it.
+
+Suggested fields on Transaction:
+
+classification_source: imported | ai | rule | manual
+classified_by_rule: Optional[str]  -- name of the rule that classified it
+ai_confidence: Optional[float]  -- confidence score from AI
+original_category_id: Optional[int]  -- category before manual override
+
+This gives much more powerful behavior for automation.
+
+17. Non-negotiable design principles
+
+Database migrations
+Stable domain entities
+Foreign keys and proper relationships
+IDs instead of names as references
+Frontend communicates only through the API
+Backend owns all financial/business logic
+User data separated from schema/versioning
+Actual database never stored in Git
+Backups before migrations
+Keep the schema extensible, but don't make it completely dynamic
+
+The schema should be designed around the financial domain, not around frontend flexibility. Financial concepts like Transaction, Account, Currency, Amount, Date, Category, Institution are stable. Use proper SQL columns and relationships for those.
+
+If you make everything dynamic (entity/key/value), you lose:
+
+type safety
+constraints
+efficient queries
+easy reporting
+data integrity
+
+18. Recommended architecture
+
+                  MATAPAN
+                     │
+          ┌──────────┴──────────┐
+          ▼                     ▼
+     Frontend Repo         Backend Repo
+     React/TypeScript      Python/FastAPI
+                                 │
+                    ┌────────────┼────────────┐
+                    ▼            ▼            ▼
+                 Domain       Parsers        AI
+                 Logic
+                    │
+                    ▼
+                SQLAlchemy
+                    │
+                    ▼
+                  SQLite
+                    │
+                    ▼
+              matapan.db
+
+The key architectural rules:
+
+React never modifies SQLite directly
+FastAPI provides REST API endpoints
+Service layer handles business logic
+SQLAlchemy/SQLModel handles database access
+Alembic manages schema migrations
+All financial calculations happen in the backend
+
+Example API endpoints:
+
+GET    /accounts
+POST   /accounts
+PATCH  /accounts/{id}
+DELETE /accounts/{id}
+
+GET    /transactions
+PATCH  /transactions/{id}
+
+GET    /categories
+POST   /categories
+PATCH  /categories/{id}
+DELETE /categories/{id}
+
+The frontend doesn't need to know anything about SQLite.

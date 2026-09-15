@@ -50,6 +50,13 @@ erDiagram
         int parent_id FK "Self-reference for hierarchy"
     }
 
+    ClassificationSource {
+        string IMPORTED "From bank import"
+        string AI "AI suggested"
+        string RULE "Rule applied"
+        string MANUAL "User override"
+    }
+
     Transaction {
         int id PK
         int account_id FK
@@ -60,6 +67,10 @@ erDiagram
         string description "Cleaned description"
         string original_description "From bank statement"
         int category_id FK "Optional"
+        int original_category_id FK "Before manual override"
+        ClassificationSource classification_source "How categorized"
+        string classified_by_rule "Rule that classified"
+        float ai_confidence "AI confidence 0-1"
         decimal amount_in_reporting_currency "Converted to CHF/EUR..."
         decimal fx_rate_used "Rate used for conversion"
         string ticker "For investments"
@@ -177,8 +188,24 @@ erDiagram
 - `AccountBalance.account_id` + `AccountBalance.date` - Balance history
 - `Transaction.category_id` - Category filtering
 
+## Classification Audit Trail
+
+Track how each transaction got its category for smarter automation:
+
+- **classification_source**: imported | ai | rule | manual
+- **original_category_id**: remembers the category before manual override
+- **classified_by_rule**: name of the rule that classified it (if any)
+- **ai_confidence**: AI confidence score for potential future learning
+
+This enables:
+
+1. "Show me all transactions where I manually overrode AI"
+2. "Learn from my manual categorizations to improve AI suggestions"
+3. "Which rule classified this transaction incorrectly?"
+
 ## Questions to Consider
 
 1. Should `FxRate` have a composite unique constraint on (date, from_currency, to_currency)?
 2. Do we need soft delete for Transactions (is_deleted flag)?
 3. Should we track balance snapshots automatically or on-demand?
+4. Do we need a Merchant entity separate from description?

@@ -31,6 +31,15 @@ class TransactionType(str, Enum):
     REFUND = "refund"
 
 
+class ClassificationSource(str, Enum):
+    """Source of transaction classification."""
+
+    IMPORTED = "imported"  # Category came from the import (bank's categorization)
+    AI = "ai"  # Category suggested by AI
+    RULE = "rule"  # Category applied by a rule
+    MANUAL = "manual"  # User manually set the category
+
+
 class Currency(SQLModel, table=True):
     """Currency model."""
 
@@ -193,6 +202,20 @@ class Transaction(SQLModel, table=True):
     )
     category_id: Optional[int] = Field(
         default=None, foreign_key="categories.id", index=True, description="Category ID"
+    )
+    original_category_id: Optional[int] = Field(
+        default=None, foreign_key="categories.id", description="Category before manual override"
+    )
+    # Classification audit trail
+    classification_source: ClassificationSource = Field(
+        default=ClassificationSource.IMPORTED,
+        description="How the category was assigned"
+    )
+    classified_by_rule: Optional[str] = Field(
+        default=None, max_length=100, description="Name of the rule that classified this"
+    )
+    ai_confidence: Optional[float] = Field(
+        default=None, description="AI confidence score (0-1)"
     )
     # Amount converted to reporting currency (e.g., CHF)
     amount_in_reporting_currency: Optional[Decimal] = Field(

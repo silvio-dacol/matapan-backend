@@ -526,7 +526,38 @@ original_category_id: Optional[int]  -- category before manual override
 
 This gives much more powerful behavior for automation.
 
-17. Non-negotiable design principles
+17. Design philosophy: Store facts, compute derivatives
+
+The database should store facts, not derived values.
+
+Store:
+    amount (the transaction amount in original currency)
+    currency_code (the original currency)
+    fx_rate_used (for audit purposes only)
+
+Don't store:
+    amount_in_reporting_currency (computed on read)
+    unrealized_profit (computed on read)
+    market_value (computed on read)
+    net_worth_total (computed on read)
+
+Why?
+- If you store computed values, you have to update them when:
+  - FX rates change
+  - User changes reporting currency preference
+  - You discover an error in the original data
+  - Security prices change
+
+- If you compute on read:
+  - Values are always current
+  - No stale data
+  - Simpler schema
+  - Backend does the math, database is the source of truth
+
+The only exception is if you need to store the rate FOR AUDIT purposes
+("this is the rate we used for this transaction at import time").
+
+18. Non-negotiable design principles
 
 Database migrations
 Stable domain entities

@@ -42,6 +42,7 @@ erDiagram
         int account_id FK
         date date "Snapshot date"
         decimal balance "Balance on that date"
+        string currency_code FK "Should match account currency"
     }
 
     Category {
@@ -71,8 +72,6 @@ erDiagram
         ClassificationSource classification_source "How categorized"
         string classified_by_rule "Rule that classified"
         float ai_confidence "AI confidence 0-1"
-        decimal amount_in_reporting_currency "Converted to CHF/EUR..."
-        decimal fx_rate_used "Rate used for conversion"
         string ticker "For investments"
         decimal quantity "For investments"
         decimal price "For investments"
@@ -95,9 +94,10 @@ erDiagram
         string name "Apartment, Car..."
         string asset_type "real estate, vehicle..."
         string currency_code FK
-        decimal current_value
-        decimal purchase_price
+        decimal current_value "Current market value"
+        decimal purchase_price "What was paid"
         date purchase_date
+        string notes
     }
 
     Liability {
@@ -105,9 +105,9 @@ erDiagram
         string name "Mortgage, Car loan..."
         string liability_type "mortgage, personal..."
         string currency_code FK
-        decimal current_value
-        decimal original_value
-        decimal interest_rate
+        decimal current_value "Amount currently owed"
+        decimal original_value "Original loan amount"
+        decimal interest_rate "Annual interest rate"
         date start_date
         date end_date
     }
@@ -122,6 +122,34 @@ erDiagram
         int account_id FK
     }
 
+    Security {
+        string isin PK "ISIN code"
+        string description "ENI SPA 4.30% 23/28..."
+        string asset_category "bond, stock, etf..."
+        string issuer "Company/government"
+        string currency_code FK "Denomination currency"
+    }
+
+    Position {
+        string position_id PK
+        int account_id FK
+        string isin FK "Security ISIN"
+        decimal quantity "Number of units"
+        decimal cost_price "Price per unit at purchase"
+        date as_of_date "Snapshot date"
+        decimal close_price "Current market price (updated periodically)"
+    }
+
+    UserSettings {
+        int id PK
+        string user_id "User identifier"
+        string home_country "Home country (IT, SE, CN...)"
+        string residence_country "Current residence"
+        string tax_residency "Tax residency country"
+        string reporting_currency FK "Default reporting currency"
+        datetime updated_at
+    }
+
     %% Relationships
     Currency ||--o{ Account : "has"
     Currency ||--o{ Transaction : "uses"
@@ -134,6 +162,7 @@ erDiagram
 
     Account ||--o{ Transaction : "contains"
     Account ||--o{ AccountBalance : "tracks"
+    Account ||--o{ Position : "holds"
 
     Transaction }o--|| Category : "categorized as"
     Transaction }o--o{ Tag : "tagged with"
@@ -147,31 +176,48 @@ erDiagram
     Liability }o--|| Currency : "in"
 
     ParserMetadata }o--|| Account : "imported to"
+
+    Security ||--o{ Position : "holds"
+    Security }o--|| Currency : "denominated in"
+
+    Position ||--|| Account : "in"
+    Position ||--|| Security : "for"
+
+    UserSettings }o--|| Currency : "reporting currency"
 ```
 
 ## Key Design Decisions
 
-### 1. Multi-Currency Support
+### 1. Multi-Currency Support (Computed, Not Stored)
 - Each **Transaction** stores original `amount` and `currency_code`
-- The `amount_in_reporting_currency` field stores the FX-converted value (e.g., to CHF)
-- Daily **FxRate** table stores historical rates for accurate conversion
+- Conversion to reporting currency is **computed on read** using FxRate table
+- No stale stored values when rates change
 
 ### 2. Transaction Categorization
 - **Category** supports hierarchy via `parent_id` (e.g., "Food" → "Groceries")
 - **Tag** provides flexible many-to-many labeling
 - Category is optional (AI can suggest later)
+- `classification_source` tracks how category was assigned (imported/ai/rule/manual)
 
-### 3. Investment Tracking
-- **Transaction** has `ticker`, `quantity`, `price` for securities
-- **AccountType.INVESTMENT** distinguishes investment accounts
+### 3. Investment Positions (Computed Values)
+- `Position` stores: quantity, cost_price, close_price (updated periodically)
+- Computed on read: cost_basis, market_value, unrealized_profit/loss
+- **Transaction** has ticker, quantity, price for buy/sell transactions
 
 ### 4. Net Worth Calculation
-- **AccountBalance** snapshots balances over time for historical net worth
-- **Asset** and **Liability** tables for real-world holdings
+- **AccountBalance** snapshots balances over time
+- Total net worth = sum of (balance * fx_rate) + assets - liabilities
+- All computed, nothing stored redundantly
 
 ### 5. Parser Metadata
 - **ParserMetadata** tracks imports to avoid duplicate processing
 - `file_hash` allows detecting if same file is re-uploaded
+
+### 6. Design Philosophy: Store Facts, Compute Derivatives
+- Store: amounts, prices, quantities, dates, descriptions
+- Don't store: anything that can be derived from what you store
+- This prevents data inconsistency and reduces storage
+- Backend handles computation; database is for facts
 
 ## Normalization Notes
 
@@ -203,9 +249,130 @@ This enables:
 2. "Learn from my manual categorizations to improve AI suggestions"
 3. "Which rule classified this transaction incorrectly?"
 
+## Critical Issues Found in Old Database
+
+Comparing the old JSON database to the proposed SQL design reveals important issues:
+
+### 1. Transaction Uses String References (VIOLATES IDs not names)
+
+The old database stores:
+```json
+"from_account_id": "NB_CHECKING"
+"to_account_id": "EXTERNAL_PAYEE"
+"category": "uncategorized"
+```
+
+This is fragile. If you rename "uncategorized" to "unassigned", you break nothing. But if you have 10,000 transactions referencing "uncategorized" as a string, you now have data cleanup to do.
+
+The new SQL design uses proper foreign keys: `category_id = 42` references a categories table row.
+
+### 2. Investment Data is Denormalized
+
+The old database has `instruments` and `positions` as separate arrays with redundant data:
+
+```json
+"instrument_id": "ISIN_IT0005521171",
+"description": "ENI SPA 4.30% 23/28",
+```
+
+But `positions` re-declare this info and add calculated fields:
+
+```json
+"cost_price": 104.2594,
+"cost_basis": 5212.97,
+"close_price": 103.31,
+"market_value": 5165.5,
+"unrealized_profit": 0.0,
+"unrealized_loss": 47.47
+```
+
+**Problem**: `cost_basis`, `market_value`, `unrealized_profit/loss` are derived/calculated values. These should NOT be stored—they should be computed on read.
+
+**Correct design**:
+- `Instrument` (or `Security`) table with ISIN, description, type
+- `Position` table with just: account_id, instrument_id, quantity, cost_price (what you paid)
+- Calculations: `market_value = quantity * current_price`, `unrealized = market_value - (quantity * cost_price)`
+
+### 3. FX Rates are Monthly, Not Daily
+
+Old database:
+```json
+{ "month": "2026-01", "from_currency": "SEK", "to_currency": "EUR", "rate": 10.68 }
+```
+
+This provides poor accuracy. A transaction on January 15 gets the same rate as one on January 31.
+
+**Recommendation**: Daily rates in the new design. The old monthly data should be converted.
+
+### 4. Missing: UserProfile Entity
+
+The old database mixes user configuration with financial data:
+```json
+"user_profile": {
+  "user_id": "example_user",
+  "home_country": "IT",
+  "tax_residency": "SE",
+  "base_currency": "EUR"
+}
+```
+
+**Recommendation**: Add a `UserSettings` table:
+```sql
+user_settings
+    reporting_currency: FK to currencies.code
+    home_country: string
+    tax_residency: string
+```
+
+### 5. Missing: Security/Instrument Entity
+
+The old `instruments` array has security info but no proper table.
+
+**Recommendation**: Add a `Security` table:
+```sql
+Security {
+    isin: string PK
+    description: string
+    asset_category: string  -- bond, stock, etf...
+    issuer: string
+}
+```
+
+### 6. HICP Data is External
+
+The `hicp_series.json` (inflation data by country/month) doesn't belong in the core financial database. It's reference data for calculations.
+
+**Recommendation**: Either:
+- Keep as a separate reference table
+- Fetch from external API when needed
+- Store in a `ReferenceData` schema, not `Financial`
+
+### 7. Balance References vs AccountBalance
+
+Old database has `balance_references` as simple snapshots. This is correctly modeled in the new `AccountBalance` table but needs clarification:
+
+**Question**: Do we need both `balance_references` (manual) and automatic balance tracking?
+
+### 8. Rules Are String-Based Glob Matching
+
+Old rules:
+```json
+{ "when": { "field": "description", "contains": "amazon" }, "set": { "category": "Shopping" } }
+```
+
+**Limitation**: Only supports "contains" matching.
+
+**Recommendation**: The `classified_by_rule` field in Transaction can store the rule name that matched, but consider supporting more matching types:
+- regex
+- exact match
+- prefix/suffix
+- multi-field conditions (as already shown in .rules.example.json)
+
 ## Questions to Consider
 
 1. Should `FxRate` have a composite unique constraint on (date, from_currency, to_currency)?
 2. Do we need soft delete for Transactions (is_deleted flag)?
 3. Should we track balance snapshots automatically or on-demand?
 4. Do we need a Merchant entity separate from description?
+5. Should calculated fields like `unrealized_profit` be stored or computed?
+6. Do we need a separate Security/Instrument table, or is ticker+description sufficient?

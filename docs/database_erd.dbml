@@ -1,0 +1,206 @@
+// =========================================================
+// CONFIGURATION / REFERENCE DATA
+// =========================================================
+
+Table Currency {
+  code char(3) [pk]
+  name varchar
+  symbol char(1)
+  decimal_places int
+}
+
+Table UserSettings {
+  id int [pk]
+  reporting_currency_code char(3) [ref: > Currency.code]
+  tax_residency varchar
+  updated_at datetime
+}
+
+Table Institution {
+  id int [pk]
+  name varchar
+  country_code char(2)
+  logo_url varchar
+}
+
+Table Category {
+  id int [pk]
+  parent_id int [ref: > Category.id]
+  name varchar
+  icon varchar
+  is_income boolean
+}
+
+// =========================================================
+// ACCOUNTS
+// =========================================================
+
+Table Account {
+  id int [pk]
+  institution_id int [ref: > Institution.id]
+  currency_code char(3) [ref: > Currency.code]
+  name varchar
+  account_number varchar
+  account_type enum
+  is_active boolean
+}
+
+Table AccountBalance {
+  id bigint [pk]
+  account_id int [ref: > Account.id]
+  snapshot_date date
+  balance decimal
+}
+
+// =========================================================
+// TRANSACTIONS
+// =========================================================
+
+Table Transaction {
+  id bigint [pk]
+  account_id int [ref: > Account.id]
+  transaction_date date
+  amount decimal
+  currency_code char(3) [ref: > Currency.code]
+  type enum
+  description varchar
+  original_description varchar
+  category_id int [ref: > Category.id]
+  classification_source enum
+  ai_confidence float
+  reference_id varchar
+}
+
+Table Tag {
+  id int [pk]
+  name varchar
+  color_hex varchar
+}
+
+Table TransactionTag {
+  transaction_id bigint [pk, ref: > Transaction.id]
+  tag_id int [pk, ref: > Tag.id]
+}
+
+// =========================================================
+// INVESTMENTS
+// =========================================================
+
+Table Security {
+  isin varchar [pk]
+  ticker varchar
+  name varchar
+  asset_class enum
+  currency_code char(3) [ref: > Currency.code]
+}
+
+Table Trade {
+  id bigint [pk]
+  account_id int [ref: > Account.id]
+  security_isin varchar [ref: > Security.isin]
+  trade_date date
+  action enum
+  quantity decimal
+  price_per_unit decimal
+  fees decimal
+  total_amount decimal
+}
+
+Table PositionSnapshot {
+  id bigint [pk]
+  account_id int [ref: > Account.id]
+  security_isin varchar [ref: > Security.isin]
+  snapshot_date date
+  quantity decimal
+  price decimal
+  market_value decimal
+  currency_code char(3) [ref: > Currency.code]
+}
+
+// =========================================================
+// OTHER ASSETS
+// =========================================================
+
+Table Asset {
+  id int [pk]
+  currency_code char(3) [ref: > Currency.code]
+  name varchar
+  type enum
+  purchase_price decimal
+  purchase_date date
+}
+
+Table AssetValue {
+  id bigint [pk]
+  asset_id int [ref: > Asset.id]
+  snapshot_date date
+  value decimal
+}
+
+// =========================================================
+// LIABILITIES
+// =========================================================
+
+Table Liability {
+  id int [pk]
+  currency_code char(3) [ref: > Currency.code]
+  name varchar
+  type enum
+  original_amount decimal
+  interest_rate decimal
+  start_date date
+  end_date date
+}
+
+Table LiabilityBalance {
+  id bigint [pk]
+  liability_id int [ref: > Liability.id]
+  snapshot_date date
+  balance decimal
+}
+
+// =========================================================
+// ECONOMIC / MARKET DATA
+// =========================================================
+
+Table FxRate {
+  id bigint [pk]
+  from_currency_code char(3) [ref: > Currency.code]
+  to_currency_code char(3) [ref: > Currency.code]
+  date date
+  rate decimal
+  source varchar
+}
+
+Table PriceIndex {
+  id bigint [pk]
+  country_code char(2)
+  index_code varchar
+  series_code varchar
+  date date
+  index_value decimal
+  source varchar
+}
+
+Table SecurityPrice {
+  id bigint [pk]
+  security_isin varchar [ref: > Security.isin]
+  date date
+  price decimal
+  currency_code char(3) [ref: > Currency.code]
+  source varchar
+}
+
+// =========================================================
+// IMPORT / DATA PROVENANCE
+// =========================================================
+
+Table Import {
+  id bigint [pk]
+  account_id int [ref: > Account.id]
+  file_name varchar
+  file_hash varchar
+  imported_at datetime
+  records_count int
+  status enum
+}

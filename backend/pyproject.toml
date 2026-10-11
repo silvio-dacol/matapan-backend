@@ -1,1 +1,35 @@
-# Placeholder for Python dependencies, packaging, and test configuration.
+[build-system]
+requires = ["setuptools>=77,<83"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matapan-backend"
+version = "0.1.0"
+description = "Local-first Matapan API"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "starlette>=1.7,<2",
+    "pydantic>=2.10,<3",
+    "python-multipart>=0.0.20,<1",
+    "uvicorn>=0.34,<1",
+    "SQLAlchemy>=2.0.38,<2.1",
+    "alembic>=1.14,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<10", "httpx2>=2,<3", "ruff>=0.11,<1"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

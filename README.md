@@ -1,12 +1,15 @@
 # Matapan
 
-Repository scaffold following [the MVP code structure](docs/mvp_code_structure.md).
-The files are placeholders for the first implementation slice; runtime setup,
-dependencies, application behavior, migrations, and tests have not been implemented.
+Repository following [the MVP code structure](docs/mvp_code_structure.md).
+The backend supports a local API test: accounts, manually confirmed dated cash
+balances, reviewed Revolut CSV imports, transactions, and as-of account reports.
+See [backend/README.md](backend/README.md)
+for installation, startup, interactive API testing, and automated checks.
+The frontend remains a placeholder.
 
-- `backend/src/matapan/`: API, database, models, imports, reports, and Revolut parser placeholders.
-- `backend/migrations/`: reserved for Alembic migrations; `.gitkeep` preserves the empty directory in Git.
-- `backend/tests/`: parser, import, and reporting test placeholders.
+- `backend/src/matapan/`: API, database, models, import workflow, Revolut adapter, and reports.
+- `backend/migrations/`: Alembic configuration and incremental database migrations.
+- `backend/tests/`: API, database, parser, import, and report tests with synthetic fixtures.
 - `frontend/src/`: React startup, application, API integration, and stylesheet placeholders.
 - `.env.example`: reserved for non-secret local settings.
 
@@ -15,5 +18,4 @@ The document paths shown in the starting tree are available through
 [docs/architecture.md](docs/architecture.md) and
 [docs/code-structure.md](docs/code-structure.md), which reference the existing documents.
 
-Run and test instructions will be added when the runnable skeleton is implemented.
 Keep real bank exports outside Git; tests should use synthetic or anonymized samples.

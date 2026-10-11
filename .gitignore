@@ -1,0 +1,38 @@
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+
+# Python environments, caches, and build output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+/backend/build/
+/backend/dist/
+.coverage
+htmlcov/
+
+# Frontend dependencies and build output
+node_modules/
+/frontend/dist/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+
+# SQLite databases and their journal files
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Private local data and uploaded exports
+data/
+uploads/
+exports/

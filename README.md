@@ -19,3 +19,7 @@ The document paths shown in the starting tree are available through
 [docs/code-structure.md](docs/code-structure.md), which reference the existing documents.
 
 Keep real bank exports outside Git; tests should use synthetic or anonymized samples.
+
+# When updating the version
+
+Change both in pyproject.toml and in backend/src/matapan/__init__.py the version of the package. Copy what you have done at work already so you can tag the commit and the releases.

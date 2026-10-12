@@ -51,6 +51,36 @@ def test_invalid_account_does_not_persist(client, payload):
     assert client.get("/api/v1/accounts").json() == []
 
 
+def test_delete_empty_account_survives_restart(client, database_url, account):
+    other = client.post(
+        "/api/v1/accounts", json={"name": "Keep this account", "currency_code": "EUR"}
+    ).json()
+    url = f"/api/v1/accounts/{account['id']}"
+    response = client.delete(url)
+    assert response.status_code == 204
+    assert response.content == b""
+    assert client.get(url).status_code == 404
+    assert client.delete(url).status_code == 404
+    with TestClient(create_app(database_url), base_url="http://localhost") as restarted:
+        assert restarted.get(url).status_code == 404
+        assert restarted.get("/api/v1/accounts").json() == [other]
+
+
+def test_delete_unknown_or_invalid_account(client):
+    assert client.delete(f"/api/v1/accounts/{uuid4()}").status_code == 404
+    assert client.delete("/api/v1/accounts/not-a-uuid").status_code == 422
+
+
+def test_delete_account_with_balance_preserves_data(client, account, save_balance):
+    saved = save_balance("123.45")
+    url = f"/api/v1/accounts/{account['id']}"
+    response = client.delete(url)
+    assert response.status_code == 409
+    assert client.get(url).json() == account
+    assert client.get(f"{url}/cash-balances").json() == [saved]
+    assert client.get(f"{url}/report?as_of=2026-01-31").json()["amount"] == "123.45"
+
+
 @pytest.mark.parametrize(
     "amount",
     [12.34, 123, True, None, "NaN", "Infinity", "1e3", "1.234567891", "100000000000000000000"],

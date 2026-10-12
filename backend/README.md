@@ -61,6 +61,7 @@ Available endpoints:
 | GET | `/health` | API and database health |
 | POST / GET | `/api/v1/accounts` | Create / list accounts |
 | GET | `/api/v1/accounts/{id}` | Read an account |
+| DELETE | `/api/v1/accounts/{id}` | Delete an empty account; linked records return `409` |
 | POST / GET | `/api/v1/accounts/{id}/cash-balances` | Confirm / list manual balances |
 | GET | `/api/v1/accounts/{id}/report?as_of=YYYY-MM-DD` | Read the latest usable dated cash evidence |
 | GET | `/api/v1/accounts/{id}/transactions` | Read canonical movements and import provenance |
@@ -73,6 +74,12 @@ List endpoints accept `limit` (1–100, default 100) and `offset` (default 0).
 Each initial account has one cash currency context; a balance must match it.
 Currency codes are normalized to three uppercase letters; FX conversion and a
 currency reference catalog are not implemented in this slice.
+
+`DELETE /api/v1/accounts/{id}` permanently removes an empty account and returns
+`204` with no response body. Unknown IDs return `404`. Accounts with balances,
+transactions, or import history return `409` and retain all records, including
+cancelled or expired import previews. Database foreign keys enforce this protection;
+the endpoint never cascades deletion into financial data.
 
 Money must be a JSON **string**, with at most 20 integer digits and 8 fractional
 digits. Numeric JSON amounts, non-finite values, and scientific notation are

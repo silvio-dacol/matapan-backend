@@ -24,7 +24,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import select, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -255,6 +255,37 @@ def create_app(url: str | None = None) -> FastAPI:
     @application.get("/api/v1/accounts/{account_id}", response_model=AccountRead, tags=["Accounts"])
     def read_account(account_id: UUID, session: DatabaseSession):
         return get_account(session, account_id)
+
+    @application.delete(
+        "/api/v1/accounts/{account_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        tags=["Accounts"],
+        summary="Delete an empty account",
+        description=(
+            "Permanently delete an account only when it has no balances, transactions, "
+            "or import history (including cancelled or expired previews). "
+            "Linked records are preserved and block deletion."
+        ),
+        responses={
+            404: {"description": "Account not found"},
+            409: {"description": "Account has linked records and cannot be deleted"},
+        },
+    )
+    def delete_account(account_id: UUID, session: DatabaseSession):
+        account = get_account(session, account_id)
+        session.delete(account)
+        try:
+            # Database RESTRICT constraints protect linked data, including concurrent writes.
+            session.commit()
+        except IntegrityError as error:
+            session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Account has balances, transactions, or import history and cannot be deleted."
+                ),
+            ) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @application.post(
         "/api/v1/accounts/{account_id}/cash-balances",

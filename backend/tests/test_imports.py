@@ -49,6 +49,46 @@ def link_candidates(plan):
     ]
 
 
+@pytest.mark.parametrize("import_status", ["preview", "cancelled", "expired", "committed"])
+def test_delete_account_preserves_import_history(
+    client, revolut_account, revolut_csv, import_status
+):
+    plan = preview(client, revolut_account, revolut_csv)
+    plan_url = f"/api/v1/imports/{plan['id']}"
+    account_url = f"/api/v1/accounts/{revolut_account['id']}"
+    if import_status == "cancelled":
+        assert client.post(f"{plan_url}/cancel").status_code == 200
+    elif import_status == "committed":
+        assert commit(client, plan).status_code == 200
+    elif import_status == "expired":
+        with client.app.state.sessions() as session:
+            batch = session.get(ImportBatch, plan["id"])
+            batch.expires_at = utc_now() - timedelta(minutes=1)
+            session.commit()
+
+    saved_transactions = client.get(f"{account_url}/transactions").json()
+    saved_balances = client.get(f"{account_url}/cash-balances").json()
+    with client.app.state.sessions() as session:
+        saved_rows = session.scalars(
+            select(ImportRow.id).where(ImportRow.batch_id == plan["id"]).order_by(ImportRow.id)
+        ).all()
+
+    assert client.delete(account_url).status_code == 409
+    assert client.get(account_url).json() == revolut_account
+    assert client.get(f"{account_url}/transactions").json() == saved_transactions
+    assert client.get(f"{account_url}/cash-balances").json() == saved_balances
+    with client.app.state.sessions() as session:
+        batch = session.get(ImportBatch, plan["id"])
+        assert batch is not None
+        assert batch.status == ("preview" if import_status == "expired" else import_status)
+        assert (
+            session.scalars(
+                select(ImportRow.id).where(ImportRow.batch_id == plan["id"]).order_by(ImportRow.id)
+            ).all()
+            == saved_rows
+        )
+
+
 def test_preview_does_not_accept_financial_records(client, revolut_account, revolut_csv):
     plan = preview(client, revolut_account, revolut_csv)
     assert plan["counts"] == {"new": 3, "excluded": 3}

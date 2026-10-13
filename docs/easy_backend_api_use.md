@@ -1,8 +1,8 @@
 # Easy backend API guide
 
 Use this guide to create an account, import a Revolut statement, and view the saved
-transactions and balance. The frontend is still a placeholder; use the browser's
-interactive API page.
+transactions and balance through the browser's interactive API page. To use the
+account workspace instead, follow [the easy frontend guide](easy_frontend_use.md).
 
 ## 1. Start the backend
 

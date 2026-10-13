@@ -2,7 +2,8 @@
 
 The local backend provides FastAPI, SQLite/SQLAlchemy, Alembic migrations, accounts,
 manual dated cash balances, reviewed Revolut CSV imports, transaction lists, and
-as-of account reports. The frontend remains a scaffold.
+as-of account reports. The [frontend account workspace](../frontend/README.md)
+provides account creation, import review, activity, and manual balance confirmation.
 
 From the repository root, run these PowerShell commands (Python 3.12 or newer):
 

@@ -23,6 +23,9 @@ node_modules/
 coverage/
 *.tsbuildinfo
 npm-debug.log*
+playwright-report/
+test-results/
+/frontend/.test-data/
 
 # SQLite databases and their journal files
 *.db

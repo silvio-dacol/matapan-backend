@@ -1,1 +1,268 @@
-// Placeholder for typed calls to the FastAPI backend.
+// Money is always a decimal string. The server owns all financial calculations.
+export interface Account {
+  id: string;
+  name: string;
+  institution: string | null;
+  currency_code: string;
+  revolut_product: "Current" | "Savings" | null;
+  created_at: string;
+}
+
+export type AccountCreate = Pick<
+  Account,
+  "name" | "institution" | "currency_code" | "revolut_product"
+>;
+
+export interface Balance {
+  id: string;
+  account_id: string;
+  currency_code: string;
+  as_of_date: string;
+  amount: string;
+  source: "manual" | "revolut";
+  status: "user_confirmed" | "source_reported";
+  source_timestamp: string | null;
+  note: string | null;
+  recorded_at: string;
+}
+
+export interface AccountReport {
+  account_id: string;
+  currency_code: string;
+  as_of_date: string;
+  scope: "account_cash";
+  status: "partial" | "unavailable";
+  amount: string | null;
+  balance_as_of_date: string | null;
+  balance_status:
+    "user_confirmed" | "source_reported" | "missing" | "conflicted";
+  source: "manual" | "revolut" | null;
+  source_timestamp: string | null;
+  observation_ids: string[];
+  carried_forward: boolean;
+  issues: string[];
+}
+
+export interface Transaction {
+  id: string;
+  account_id: string;
+  currency_code: string;
+  product: string;
+  transaction_type: string;
+  posted_at: string;
+  started_at: string;
+  amount: string;
+  source_amount: string;
+  fee: string;
+  source_description: string;
+  import_row_ids: string[];
+}
+
+export type Classification =
+  | "new"
+  | "duplicate"
+  | "possible_duplicate"
+  | "invalid"
+  | "excluded"
+  | "conflict";
+export interface PreviewRow {
+  id: string;
+  row_number: number;
+  classification: Classification;
+  product: string;
+  currency_code: string;
+  transaction_type: string;
+  source_state: string;
+  description: string;
+  posted_at: string | null;
+  started_at: string | null;
+  amount: string | null;
+  source_amount: string | null;
+  fee: string | null;
+  errors: string[];
+  candidate_transactions: {
+    id: string;
+    posted_at: string;
+    amount: string;
+    description: string;
+  }[];
+  decision: string | null;
+  transaction_id: string | null;
+  balance_id: string | null;
+}
+
+export interface ImportPreview {
+  id: string;
+  account_id: string;
+  currency_code: string;
+  product: string;
+  parser_id: string;
+  parser_version: string;
+  status: "preview" | "committed" | "cancelled";
+  already_imported: boolean;
+  expires_at: string;
+  observed_start: string | null;
+  observed_end: string | null;
+  declared_period: null;
+  counts: Partial<Record<Classification, number>>;
+  warnings: string[];
+  balance: {
+    classification: "new" | "duplicate" | "conflict";
+    amount: string;
+    as_of_date: string;
+    source_timestamp: string;
+    row_id: string;
+    existing_balance_id: string | null;
+    source: "revolut";
+    status: "source_reported";
+  } | null;
+  rows: PreviewRow[];
+}
+
+export interface RowDecision {
+  row_id: string;
+  action: "keep_separate" | "link_duplicate" | "skip";
+  transaction_id?: string;
+}
+
+export interface CommitResult {
+  id: string;
+  status: string;
+  new_transactions: number;
+  transactions_in_batch: number;
+  linked_duplicates: number;
+  skipped_rows: number;
+  balance_id: string | null;
+  already_imported: boolean;
+}
+
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, { ...options, credentials: "same-origin" });
+  } catch {
+    throw new ApiError(
+      0,
+      "Matapan could not connect. Check that the local API is running, then retry.",
+    );
+  }
+  const content = (await response.json().catch(() => null)) as {
+    detail?: unknown;
+  } | null;
+  if (!response.ok) {
+    let message =
+      "The request could not be completed. Check that the local API is running.";
+    if (typeof content?.detail === "string") message = content.detail;
+    if (Array.isArray(content?.detail)) {
+      message = content.detail
+        .map(
+          (item: { loc?: string[]; msg?: string }) =>
+            `${item.loc?.slice(1).join(" · ") || "Request"}: ${item.msg || "Invalid value"}`,
+        )
+        .join("; ");
+    }
+    throw new ApiError(response.status, message);
+  }
+  return content as T;
+}
+
+const json = (body: unknown): RequestInit => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+export const api = {
+  health: () => request<{ status: "ok"; version: string }>("/health"),
+  accounts: async () => {
+    const accounts: Account[] = [];
+    for (let offset = 0; ; offset += 100) {
+      const page = await request<Account[]>(
+        `/api/v1/accounts?limit=100&offset=${offset}`,
+      );
+      accounts.push(...page);
+      if (page.length < 100) return accounts;
+    }
+  },
+  createAccount: (body: AccountCreate) =>
+    request<Account>("/api/v1/accounts", json(body)),
+  report: (id: string, date: string) =>
+    request<AccountReport>(`/api/v1/accounts/${id}/report?as_of=${date}`),
+  transactions: (id: string, offset = 0) =>
+    request<Transaction[]>(
+      `/api/v1/accounts/${id}/transactions?limit=25&offset=${offset}`,
+    ),
+  balances: (id: string, offset = 0) =>
+    request<Balance[]>(
+      `/api/v1/accounts/${id}/cash-balances?limit=10&offset=${offset}`,
+    ),
+  confirmBalance: (
+    id: string,
+    body: {
+      currency_code: string;
+      as_of_date: string;
+      amount: string;
+      note: string | null;
+    },
+  ) => request<Balance>(`/api/v1/accounts/${id}/cash-balances`, json(body)),
+  preview: (id: string, file: File) => {
+    const body = new FormData();
+    body.append("account_id", id);
+    body.append("file", file);
+    return request<ImportPreview>("/api/v1/imports/preview", {
+      method: "POST",
+      body,
+    });
+  },
+  refreshPreview: (id: string) =>
+    request<ImportPreview>(`/api/v1/imports/${id}`),
+  commit: (id: string, decisions: RowDecision[], includeBalance: boolean) =>
+    request<CommitResult>(
+      `/api/v1/imports/${id}/commit`,
+      json({ decisions, include_balance: includeBalance }),
+    ),
+  cancel: (id: string) =>
+    request<{ status: string }>(`/api/v1/imports/${id}/cancel`, {
+      method: "POST",
+    }),
+};
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : "Something went wrong. Please retry.";
+}
+
+// Format the decimal text directly, preserving all digits without Number/parseFloat.
+export function money(amount: string | null, currency: string): string {
+  if (amount === null) return "Not available";
+  const negative = amount.startsWith("-");
+  const [integer, fraction = ""] = amount.replace(/^-/, "").split(".");
+  return `${negative ? "−" : ""}${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction.padEnd(2, "0")} ${currency}`;
+}
+
+export function calendarDate(value: string | null): string {
+  if (!value) return "No date";
+  // Provider timestamps have no timezone; retain their calendar date.
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${value.slice(0, 10)}T12:00:00Z`));
+}
+
+export function today(): string {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}

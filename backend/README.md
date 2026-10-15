@@ -1,8 +1,9 @@
 # Matapan backend
 
 The local backend provides FastAPI, SQLite/SQLAlchemy, Alembic migrations, accounts,
-manual dated cash balances, reviewed Revolut CSV imports, transaction lists, and
-as-of account reports. The [frontend account workspace](../frontend/README.md)
+dated/timed balance confirmations, reviewed Revolut CSV imports, transaction lists,
+checkpoint projections, and reviewed reconciliation adjustments.
+The [frontend account workspace](../frontend/README.md)
 provides account creation, import review, activity, and manual balance confirmation.
 
 From the repository root, run these PowerShell commands (Python 3.12 or newer):
@@ -65,6 +66,11 @@ Available endpoints:
 | DELETE | `/api/v1/accounts/{id}` | Delete an empty account; linked records return `409` |
 | POST / GET | `/api/v1/accounts/{id}/cash-balances` | Confirm / list manual balances |
 | GET | `/api/v1/accounts/{id}/report?as_of=YYYY-MM-DD` | Read the latest usable dated cash evidence |
+| PUT | `/api/v1/accounts/{id}/statement-timezone` | Explicitly map local export timestamps to an IANA timezone |
+| GET | `/api/v1/accounts/{id}/projection?at=ISO_TIMESTAMP` | Calculate from the latest timed confirmed checkpoint |
+| GET | `/api/v1/accounts/{id}/reconciliations` | Read interval calculations, proposals, source context, and approval history |
+| POST | `/api/v1/reconciliations/{id}/accept-adjustment` | Approve the current proposed ghost amount, including zero retirement |
+| POST | `/api/v1/reconciliations/{id}/reverse-adjustment` | Retire an active ghost while retaining its audit history |
 | GET | `/api/v1/accounts/{id}/transactions` | Read canonical movements and import provenance |
 | POST | `/api/v1/imports/preview` | Upload a CSV and review rows and balance evidence |
 | GET | `/api/v1/imports/{id}` | Refresh a preview and its current duplicate candidates |
@@ -164,6 +170,61 @@ See [the supported Revolut format](docs/revolut_csv.md) for parsing and timestam
 semantics. The original private sample files are outside the repository; committed
 fixtures contain invented descriptions and amounts.
 
-Reconciliation and synthetic adjustments, broker holdings, FX, and consolidated
-net worth remain required by the [architecture](../docs/mvp_architecture.md).
-They are subsequent slices; this account import test is not the complete MVP.
+## Timed checkpoints and ghost adjustments
+
+Apply migration `0003_reconciliation` with `alembic upgrade head` after installing
+updated dependencies (`pip install -e ".[dev]"`). It adds nullable timestamp fields
+and new reconciliation tables. Existing dates, amounts, imports, and provenance
+remain intact. `tzdata` supplies IANA timezone rules on Windows.
+
+To establish a timed reference, post a balance with the existing fields plus
+`"effective_at": "2026-10-15T14:30:00+02:00"`. `as_of_date` must match the local
+date in that timestamp. An explicit offset and whole seconds are required. The API
+stores the instant in UTC and preserves the entered offset separately from
+`recorded_at`. Confirm the booked cash balance including all booked movements up
+to that instant, excluding pending movements. Date-only observations remain
+supported and are never assigned an invented time.
+
+Set `{"statement_timezone": "Europe/Zurich"}` using the timezone endpoint only
+after verifying the timezone used in the source export. The adapter retains its
+original local timestamps. Missing timezone mapping and ambiguous/nonexistent
+daylight-saving times block calculations rather than guessing a transaction's
+instant. Per-row time correction is not implemented yet.
+
+Projection uses the latest nonconflicted timed manual checkpoint on/before the
+requested instant and each accepted canonical booked movement in
+`(checkpoint instant, requested instant]` once. No checkpoint means unavailable,
+not zero. Original observations remain separate from calculated values. Earlier
+movements and ghosts are already reflected in the selected checkpoint and are
+never added again. URL-encode the `at` value, especially a positive UTC offset.
+The existing date-only report continues to select evidence; it does not silently
+switch to a movement-derived figure.
+
+Consecutive timed checkpoints define nonoverlapping reconciliation intervals:
+
+```text
+required ghost = confirmed close - (confirmed open + accepted real movements)
+```
+
+The list endpoint returns opening/closing evidence, movement count/total, current
+ghost, remaining difference, required ghost, source batch/decision context, issues,
+and a `signature`. Approve with `{"signature": "the reviewed signature", "reason":
+"Missing statement interval"}`. The server recalculates under SQLite's writer lock;
+stale signatures return `409`. Approval creates an audited version, superseding
+the old one. Ghosts are separate records, excluded from real transaction activity
+and income/expense. Their effective boundary is the interval's closing checkpoint.
+
+After new imports or timezone changes, proposals are recalculated on read. Changed
+approved evidence becomes `needs_review`; saved amounts do not change until
+approval. A zero proposal retires the ghost on confirmation. Voluntary reversal
+also records a decision; if a discrepancy remains, the interval is unresolved.
+Original amounts, reasons, approvals, and decision-time evidence are retained.
+Inserting a checkpoint splits the interval: retire any old spanning ghost before
+approving adjustments for the new intervals. Conflicting confirmations at one
+instant block approval pending future conflict-resolution support.
+
+Coverage remains unverified even when the arithmetic agrees. A source-backed
+checkpoint remains valid for its instant while an adjustment awaits review.
+Broker holdings, FX, consolidated net worth, conflict resolution, authentication,
+and deployment remain subsequent work required by the
+[architecture](../docs/mvp_architecture.md); this is not the complete MVP.

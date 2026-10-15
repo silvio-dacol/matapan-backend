@@ -1320,3 +1320,13 @@ th,
     transition: none !important;
   }
 }
+/* Checkpoint review uses the same account panels on desktop and mobile. */
+.reconciliation-panel { margin-top: 24px; }
+.reconciliation-period { border-top: 1px solid var(--border, #dce2da); margin-top: 24px; padding-top: 20px; }
+.reconciliation-period h3 { overflow-wrap: anywhere; }
+.reconciliation-totals { display: grid; gap: 8px; }
+.reconciliation-totals > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.reconciliation-totals dd { margin: 0; overflow-wrap: anywhere; }
+.adjustment-review { border: 0; padding: 16px 0; display: grid; gap: 16px; min-width: 0; }
+.projection-form, .projection-result { margin-top: 24px; }
+.reconciliation-panel code { overflow-wrap: anywhere; white-space: normal; }

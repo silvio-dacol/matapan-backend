@@ -139,7 +139,80 @@ def test_import_migration_preserves_existing_manual_balances(tmp_path):
             assert observation.status == "user_confirmed"
             assert observation.note == "Preserve this observation"
             assert observation.source_timestamp is None
+            assert observation.effective_at is None
+            assert observation.effective_offset is None
             assert session.get(Account, account_id).revolut_product is None
+            assert session.get(Account, account_id).statement_timezone is None
+        command.check(config)
+    finally:
+        engine.dispose()
+
+
+def test_checkpoint_migration_preserves_imported_evidence(tmp_path):
+    url = f"sqlite:///{(tmp_path / 'imported.sqlite3').as_posix()}"
+    config = migration_config(url)
+    command.upgrade(config, "0002_revolut_imports")
+    engine = make_engine(url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO accounts (id, name, currency_code, revolut_product, created_at) "
+                    "VALUES ('account', 'Synthetic imported account', 'EUR', 'Current', "
+                    "'2025-01-03 12:00:00')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO account_balances "
+                    "(id, account_id, currency_code, as_of_date, amount, source, status, "
+                    "recorded_at, source_timestamp) VALUES "
+                    "('balance', 'account', 'EUR', '2025-01-03', '90.12345678', 'revolut', "
+                    "'source_reported', '2025-01-03 12:00:00', '2025-01-03 10:01:00')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO import_batches "
+                    "(id, account_id, currency_code, product, file_hash, parser_id, "
+                    "parser_version, "
+                    "status, owner_hash, warnings, created_at, expires_at) VALUES "
+                    "('batch', 'account', 'EUR', 'Current', 'hash', 'revolut_bank_csv_en', '1', "
+                    "'committed', 'owner', '[]', '2025-01-03 12:00:00', '2025-01-03 12:30:00')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO transactions "
+                    "(id, account_id, currency_code, product, transaction_type, posted_at, "
+                    "started_at, amount, source_amount, fee, source_description, "
+                    "fingerprint, created_at) VALUES "
+                    "('transaction', 'account', 'EUR', 'Current', 'Card Payment', "
+                    "'2025-01-03 10:01:00', '2025-01-03 10:00:00', '-10', '-10', '0', "
+                    "'Synthetic merchant', 'fingerprint', '2025-01-03 12:00:00')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO import_rows "
+                    "(id, batch_id, row_number, classification, errors, product, currency_code, "
+                    "source_state, transaction_type, source_description, decision, transaction_id, "
+                    "balance_id) VALUES ('row', 'batch', 2, 'new', '[]', 'Current', 'EUR', "
+                    "'COMPLETED', 'Card Payment', 'Synthetic merchant', 'import_new', "
+                    "'transaction', 'balance')"
+                )
+            )
+            before = {
+                table: connection.execute(text(f"SELECT * FROM {table}")).all()
+                for table in ("import_batches", "transactions", "import_rows")
+            }
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            for table, records in before.items():
+                assert connection.execute(text(f"SELECT * FROM {table}")).all() == records
+            assert connection.execute(
+                text("SELECT amount, source_timestamp, effective_at FROM account_balances")
+            ).one() == ("90.12345678", "2025-01-03 10:01:00", None)
         command.check(config)
     finally:
         engine.dispose()

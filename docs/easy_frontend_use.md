@@ -180,8 +180,31 @@ and the report shows **Conflicting evidence**. The current frontend cannot selec
 which conflicting observation should be authoritative. Repeatedly entering another
 amount does not resolve that conflict.
 
-Reconciliation differences and user-approved synthetic adjustments are subsequent
-work; the balance confirmation form does not create those adjustments.
+For a precise reference, check **Use this balance as a timed reference checkpoint**
+before saving. Enter the time and UTC offset applicable on that date. Confirm the
+booked cash balance including booked movements up to and including that instant,
+excluding pending movements. Different times on the same date can be separate
+checkpoints; conflicting amounts at the same instant require investigation.
+
+In **Balance reconciliation**, confirm the timezone of the timestamps in your
+statements. **Calculate from checkpoint** adds accepted movements after the latest
+timed reference and shows a calculated balance. It never assumes a zero opening
+balance, counts earlier movements again, or changes your confirmed checkpoint.
+The account cash card continues to show dated balance evidence.
+
+After a second timed confirmation, review the interval's checkpoints, movements,
+statement context, and proposed ghost adjustment. You can investigate by leaving
+the discrepancy unresolved and finding missing statements. To approve a ghost,
+enter a reason, check the review box, and click **Confirm proposed ghost amount**.
+Ghosts represent unexplained gaps and are kept separate from real transactions.
+
+When later data arrives, the proposal is recalculated automatically and may show
+**needs review**. Confirm its new amount; if it reaches zero, confirmation removes
+the ghost from active calculations while retaining its audit trail. **Retire
+approved ghost** also supports voluntary reversal. If you insert a checkpoint in
+an already reconciled interval, retire the old spanning ghost before reviewing the
+two new intervals. A calculation that depends on uncertain timezone/DST ordering
+is blocked. Arithmetic agreement never proves that all historical data is present.
 
 ## 8. Return later or try a sample
 

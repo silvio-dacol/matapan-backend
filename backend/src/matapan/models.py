@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,6 +37,7 @@ class Account(Base):
     institution: Mapped[str | None] = mapped_column(String(120), nullable=True)
     currency_code: Mapped[str] = mapped_column(String(3))
     revolut_product: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    statement_timezone: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 
@@ -68,6 +70,52 @@ class AccountBalance(Base):
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     source_timestamp: Mapped[str | None] = mapped_column(String(19), nullable=True)
+    effective_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    effective_offset: Mapped[str | None] = mapped_column(String(6), nullable=True)
+
+
+class Reconciliation(Base):
+    __tablename__ = "reconciliations"
+    __table_args__ = (
+        UniqueConstraint("opening_balance_id", "closing_balance_id", name="uq_reconciliation_pair"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    currency_code: Mapped[str] = mapped_column(String(3))
+    opening_balance_id: Mapped[str] = mapped_column(ForeignKey("account_balances.id"))
+    closing_balance_id: Mapped[str] = mapped_column(ForeignKey("account_balances.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class ReconciliationAdjustment(Base):
+    __tablename__ = "reconciliation_adjustments"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('active', 'superseded', 'reversed')", name="ck_adjustment_state"
+        ),
+        Index(
+            "uq_active_reconciliation_adjustment",
+            "reconciliation_id",
+            unique=True,
+            sqlite_where=text("state = 'active'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    reconciliation_id: Mapped[str] = mapped_column(ForeignKey("reconciliations.id"))
+    amount: Mapped[Decimal] = mapped_column(ExactDecimal())
+    state: Mapped[str] = mapped_column(String(20))
+    action: Mapped[str] = mapped_column(String(20))
+    reason: Mapped[str] = mapped_column(String(500))
+    actor: Mapped[str] = mapped_column(String(40), default="local_user")
+    approved_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    replaces_id: Mapped[str | None] = mapped_column(
+        ForeignKey("reconciliation_adjustments.id"),
+        nullable=True,
+    )
+    evidence_signature: Mapped[str] = mapped_column(String(64))
+    evidence: Mapped[dict] = mapped_column(JSON())
 
 
 class ImportBatch(Base):

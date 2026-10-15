@@ -249,6 +249,9 @@ export function BalanceHistory({
                     {balance.source_timestamp.slice(11)} · source local time
                   </span>
                 )}
+                {balance.effective_at && (
+                  <span className="cell-subtitle">Checkpoint: {balance.effective_at} (entered at UTC{balance.effective_offset})</span>
+                )}
                 {balance.note && <p className="balance-note">{balance.note}</p>}
               </div>
               <span

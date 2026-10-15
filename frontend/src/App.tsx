@@ -5,6 +5,7 @@ import ImportPanel from "./ImportPanel";
 import { AccountForm, BalanceForm } from "./AccountForms";
 import { Activity, BalanceHistory } from "./AccountRecords";
 import { Notice } from "./Notice";
+import ReconciliationPanel from "./ReconciliationPanel";
 
 function Mark({ small = false }: { small?: boolean }) {
   return (
@@ -28,14 +29,15 @@ function Workspace({
   const [revision, setRevision] = useState(0);
   const [panel, setPanel] = useState<"import" | "balance" | null>(null);
   const [message, setMessage] = useState("");
+  const [reconBusy, setReconBusy] = useState(false);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   const eligible =
     account.revolut_product !== null &&
     (!account.institution || /revolut/i.test(account.institution));
 
   useEffect(() => {
-    onLock(panel !== null);
-  }, [panel, onLock]);
+    onLock(panel !== null || reconBusy);
+  }, [panel, reconBusy, onLock]);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -82,7 +84,7 @@ function Workspace({
         </div>
         <div className="button-row">
           <button
-            disabled={panel !== null}
+            disabled={panel !== null || reconBusy}
             onClick={() => {
               setMessage("");
               setPanel("balance");
@@ -92,7 +94,7 @@ function Workspace({
           </button>
           <button
             className="primary"
-            disabled={panel !== null || !eligible}
+            disabled={panel !== null || reconBusy || !eligible}
             onClick={() => {
               setMessage("");
               setPanel("import");
@@ -162,6 +164,7 @@ function Workspace({
                 time
               </span>
             )}
+            {currentReport?.balance_effective_at && <span>Checkpoint: {currentReport.balance_effective_at}</span>}
           </p>
           <div className="balance-footer">
             <label>
@@ -259,6 +262,7 @@ function Workspace({
         </div>
       )}
       <Activity account={account} revision={revision} />
+      <ReconciliationPanel account={account} revision={revision} asOf={asOf} disabled={panel !== null || reconBusy} onChanged={refresh} onBusy={setReconBusy} />
       <BalanceHistory account={account} revision={revision} />
     </>
   );

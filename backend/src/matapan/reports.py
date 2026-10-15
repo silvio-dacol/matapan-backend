@@ -27,6 +27,7 @@ def account_report(session: Session, account: Account, as_of: date) -> dict:
         "balance_status": "missing",
         "source": None,
         "source_timestamp": None,
+        "balance_effective_at": None,
         "observation_ids": [],
         "carried_forward": False,
         "issues": [],
@@ -44,6 +45,12 @@ def account_report(session: Session, account: Account, as_of: date) -> dict:
         )
         .order_by(AccountBalance.id)
     ).all()
+    manual = [observation for observation in observations if observation.source == "manual"]
+    if manual and all(observation.effective_at is not None for observation in manual):
+        latest_instant = max(observation.effective_at for observation in manual)
+        observations = [
+            observation for observation in manual if observation.effective_at == latest_instant
+        ]
     if not any(observation.source == "manual" for observation in observations):
         latest_timestamp = max(observation.source_timestamp or "" for observation in observations)
         observations = [
@@ -75,6 +82,7 @@ def account_report(session: Session, account: Account, as_of: date) -> dict:
             if any(item.source == "manual" for item in observations)
             else observations[0].source_timestamp
         ),
+        balance_effective_at=observations[0].effective_at,
         carried_forward=latest_date < as_of,
         issues=["This report covers this account's cash only; it is not complete net worth."],
     )

@@ -36,7 +36,7 @@ Keep real bank exports outside Git; tests should use synthetic or anonymized sam
 
 ## Progress recap
 
-Updated **2026-10-15**, based on the implementation at commit `2b7623d`.
+Updated **2026-10-15**, including the checkpoint/reconciliation implementation.
 Matapan currently provides the first working account-import slice. It is **not yet
 the complete MVP** defined by [architecture v0.6](docs/mvp_architecture.md).
 The slice names below follow [the implementation guide](docs/mvp_code_structure.md);
@@ -67,6 +67,16 @@ they do not imply that all architecture milestones are complete.
   future evidence is excluded from past reports. Conflicting observations are
   retained and make the value unavailable; older evidence is labeled as carried
   forward. Account cash is shown as a partial financial picture.
+- **Timed checkpoints and reconciliation (Slice 2):** confirm a booked balance
+  with a date, time, and UTC offset; explicitly configure the timezone of imported
+  statement timestamps. The first timed confirmation provides the baseline, and
+  later balances can be calculated from accepted movements after that checkpoint.
+  Consecutive checkpoints expose gaps and proposed synthetic "ghost" adjustments.
+  Creation, revision, and retirement require approval and preserve evidence and
+  audit history. New imports recalculate proposals automatically and mark changed
+  approvals as needing review. Zero residual ghosts can be retired on confirmation.
+  Ghosts remain separate from real activity and are never added to the confirmed
+  balance. A new migration adds these records without replacing existing data.
 - **Working frontend:** a React/TypeScript account workspace with account creation,
   statement upload, duplicate and invalid-row review, import confirmation and
   cancellation, paginated activity, dated reports, and manual balance confirmation.
@@ -79,60 +89,19 @@ they do not imply that all architecture milestones are complete.
 
 ### What still needs to be done
 
-The next substantial feature is **Slice 2: reconciliation**. Manual balance
-confirmation already exists, but it does not reconcile transaction history.
-Remaining work, in the guide's suggested order:
+The core of **Slice 2: reconciliation** is implemented. Remaining limitations and
+subsequent work, in the guide's suggested order:
 
-1. **Reconciliation and adjustments:** compare dated opening/closing checkpoints
-   with accepted movements using explicit interval boundaries and coverage
-   evidence; display discrepancies; let the user investigate or explicitly approve
-   a synthetic adjustment. Add audited reversal/supersession and proposals to
-   revise adjustments when late statements arrive. Adjustments must not become
-   income/expense or be added on top of a confirmed balance in net worth.
-   **Timed balance checkpoints and roll-forward:** extend manual confirmation
-   from a calendar date to an effective date, time, and explicit timezone for a
-   specific account/currency. Keep the effective instant separate from when the
-   confirmation was recorded, and preserve existing date-only observations
-   without inventing a time. Let the user confirm the booked cash balance with
-   pending movements excluded. The intended reference and adjustment behavior is:
-
-   - **No confirmed checkpoint yet:** an absolute balance is unknown, not zero.
-     The first confirmation establishes the account's baseline. Recalculate
-     projections using this reference and accepted movements in their actual time
-     intervals, rather than adding the checkpoint amount to a total that already
-     includes earlier movements. No ghost transaction is needed to reconcile an
-     assumed zero opening balance. Any backward calculation must be labeled as
-     derived and subject to history-coverage uncertainty.
-   - **After a checkpoint:** calculate a derived balance by adding each accepted
-     booked movement exactly once in `(checkpoint time, report time]`, including
-     reviewed manual movements. Earlier movements are already reflected in the
-     checkpoint and must not be added again. Preserve the confirmed amount and
-     distinguish it from calculated balances.
-   - **A subsequent confirmation:** preserve both checkpoints. Compare the new
-     confirmed amount with the projection from the previous checkpoint. Offer a
-     user-approved, explicitly synthetic "ghost transaction" for the unexplained
-     difference, scoped to that account, currency, and checkpoint interval. It
-     reconciles the ledger without changing either confirmed checkpoint, becoming
-     income/expense, or being added on top of a confirmed balance in net worth.
-   - **More data arrives:** deduplicate first, then automatically recalculate the
-     required ghost amount for each affected interval, excluding the ghost being
-     revised from its own calculation. Present the revised amount for user
-     confirmation; do not silently change an approved adjustment. Until approval,
-     flag the reconciliation as needing review. If the required amount reaches
-     zero, offer removal of the ghost from active calculations on confirmation,
-     retaining its original approval and reversal/supersession in the audit
-     history rather than physically deleting the financial record.
-
-   For example, checkpoints of CHF 1,000 and CHF 1,300 with CHF +100 of known
-   intervening movements require a CHF +200 ghost. A later accepted CHF +150
-   movement proposes reducing it to CHF +50; the final CHF +50 proposes retiring
-   it. Neither proposal changes the confirmed CHF 1,300 checkpoint.
-   Show coverage uncertainty even when an adjustment makes the arithmetic match.
-   Unknown timezones or ordering at a checkpoint must be resolved before using
-   ambiguous movements in the calculation.
-   This timed confirmation and roll-forward behavior is not implemented yet;
-   current manual confirmations accept a date only, and reports select balance
-   evidence rather than applying subsequent movements.
+1. **Remaining reconciliation limitations:** legacy date-only observations retain
+   their original semantics and are not assigned invented times. Timed calculations
+   require an explicit statement timezone; ambiguous/nonexistent daylight-saving
+   timestamps block the calculation, with per-row time correction still to be
+   implemented. Conflicting confirmations at the same instant block approval;
+   explicit conflict resolution remains work below. History coverage stays
+   unverified, even when a ghost makes the arithmetic match. Before the first
+   timed confirmation the projected balance is unavailable, not zero. The existing
+   dated report remains an evidence view; use **Calculate from checkpoint** for
+   transaction-derived balances. Manual transaction entry remains proposed below.
 2. **Observation and review lifecycle:** allow explicit selection/resolution of
    conflicting balance evidence while retaining originals; make duplicate decisions
    reversible with an audit trail; provide an import-history view and clearer
@@ -167,6 +136,17 @@ Remaining work, in the guide's suggested order:
    reproducibility. Use architecture sections 8, 13.9, and 14.9 as the acceptance
    checklist before declaring the MVP complete.
 
+**Future account organization update:** group accounts by institution in the
+frontend (for example, Revolut or SEB), retaining the existing account appearance
+within each group. Each account should belong to a reusable institution record.
+When creating an account, let the user select an existing institution from a
+dropdown or add a new institution without leaving the form. Multiple products
+and currencies can belong to the same institution while remaining separate
+accounts. Migrate existing institution names and account associations without
+losing financial history; review ambiguous name variations rather than silently
+merging institutions. Institution membership does not by itself mean that an
+importer for that institution is supported. This update is planned, not implemented.
+
 **After the MVP:** additional institution adapters (SEB, Intesa Sanpaolo, China
 Construction Bank, Alipay, and WeChat), broader export variants, transfer linking,
 categorization, cash-flow/performance analytics, inflation, recurring imports, and
@@ -177,9 +157,11 @@ exist. These are later extensions, not prerequisites for the first complete MVP.
 
 Checks run for this recap on **2026-10-15**:
 
-- Backend: `python -m pytest -q` — **80 passed**.
+- Backend: `python -m pytest -q` — **103 passed**, including checkpoint arithmetic,
+  ghost revision/retirement, concurrent approvals, rollback, and restore tests.
 - Frontend: `npm.cmd run build` — **passed**, including strict TypeScript checks.
-- Playwright, Ruff, and `alembic check` were not rerun for this documentation update.
+- Browser: `npm.cmd test` — **14 passed** across desktop and mobile.
+- Ruff lint and format checks passed. Tests also check migration/schema agreement.
 
 The repository includes backend checks for validation, exact money, migrations,
 foreign keys, persistence, dated reports, reimports, overlapping files, duplicate

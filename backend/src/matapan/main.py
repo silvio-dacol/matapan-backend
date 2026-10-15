@@ -1,4 +1,4 @@
-"""Thin HTTP API for the first local backend test."""
+"""Local HTTP API for reviewed account imports and cash reconciliation."""
 
 import hashlib
 import re
@@ -22,7 +22,15 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
@@ -33,6 +41,7 @@ from matapan.db import database_url, make_engine, require_current_schema
 from matapan.importers.revolut import MAX_FILE_BYTES, StatementError
 from matapan.models import Account, AccountBalance, ImportRow, Transaction
 from matapan.reports import account_report
+from matapan.services import reconciliation_service as reconciliation
 
 
 def calendar_date(value):
@@ -42,6 +51,22 @@ def calendar_date(value):
 
 
 CalendarDate = Annotated[date, BeforeValidator(calendar_date)]
+
+
+def instant(value):
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2})", value
+    ):
+        raise ValueError("Send an ISO timestamp with seconds and an explicit UTC offset")
+    parsed = datetime.fromisoformat(value)
+    if value[-1] != "Z" and int(value[-2:]) > 59:
+        raise ValueError("UTC offset minutes must be between 00 and 59")
+    if abs(parsed.utcoffset().total_seconds()) > 14 * 3600:
+        raise ValueError("UTC offset must be between -14:00 and +14:00")
+    return parsed
+
+
+Instant = Annotated[AwareDatetime, BeforeValidator(instant)]
 
 
 class RequestModel(BaseModel):
@@ -69,6 +94,7 @@ class AccountRead(BaseModel):
     currency_code: str
     revolut_product: Literal["Current", "Savings"] | None
     created_at: datetime
+    statement_timezone: str | None
 
 
 class BalanceCreate(RequestModel):
@@ -76,6 +102,13 @@ class BalanceCreate(RequestModel):
     as_of_date: CalendarDate
     amount: Decimal = Field(max_digits=28, decimal_places=8, allow_inf_nan=False)
     note: str | None = Field(default=None, max_length=500)
+    effective_at: Instant | None = None
+
+    @model_validator(mode="after")
+    def matching_date(self):
+        if self.effective_at and self.effective_at.date() != self.as_of_date:
+            raise ValueError("as_of_date must match the local date of effective_at")
+        return self
 
     @field_validator("currency_code", mode="before")
     @classmethod
@@ -105,6 +138,17 @@ class BalanceRead(BaseModel):
     source_timestamp: str | None
     note: str | None
     recorded_at: datetime
+    effective_at: datetime | None
+    effective_offset: str | None
+
+
+class StatementTimezone(RequestModel):
+    statement_timezone: str = Field(min_length=1, max_length=100)
+
+
+class AdjustmentDecision(RequestModel):
+    signature: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class AccountReport(BaseModel):
@@ -118,6 +162,7 @@ class AccountReport(BaseModel):
     balance_status: Literal["user_confirmed", "source_reported", "missing", "conflicted"]
     source: Literal["manual", "revolut"] | None
     source_timestamp: str | None
+    balance_effective_at: datetime | None
     observation_ids: list[UUID]
     carried_forward: bool
     issues: list[str]
@@ -208,7 +253,7 @@ def create_app(url: str | None = None) -> FastAPI:
         title="Matapan API",
         version=__version__,
         description=(
-            "Local backend test: accounts and manually confirmed dated cash balances. "
+            "Local accounts, dated balance evidence, and timed cash reconciliation. "
             "Revolut CSV imports require a preview and explicit confirmation. "
             "Send monetary amounts as decimal strings."
         ),
@@ -292,18 +337,67 @@ def create_app(url: str | None = None) -> FastAPI:
         response_model=BalanceRead,
         status_code=status.HTTP_201_CREATED,
         tags=["Balances"],
-        summary="Confirm a manual cash balance for its stated date",
+        summary="Confirm a cash balance, optionally at a precise instant",
     )
     def create_balance(account_id: UUID, payload: BalanceCreate, session: DatabaseSession):
-        account = get_account(session, account_id)
+        account = reconciliation.lock_account(session, str(account_id))
         if payload.currency_code != account.currency_code:
             raise HTTPException(
                 status_code=422, detail="Balance currency must match account currency"
             )
-        observation = AccountBalance(account_id=account.id, **payload.model_dump())
+        values = payload.model_dump()
+        if payload.effective_at:
+            offset = payload.effective_at.strftime("%z")
+            values["effective_offset"] = f"{offset[:3]}:{offset[3:]}"
+        observation = AccountBalance(account_id=account.id, **values)
         session.add(observation)
+        session.flush()
+        reconciliation.sync_periods(session, account)
         session.commit()
+        session.refresh(observation)
         return observation
+
+    @application.put(
+        "/api/v1/accounts/{account_id}/statement-timezone",
+        response_model=AccountRead,
+        tags=["Reconciliation"],
+    )
+    def set_statement_timezone(
+        account_id: UUID, payload: StatementTimezone, session: DatabaseSession
+    ):
+        reconciliation.timezone(payload.statement_timezone)
+        account = reconciliation.lock_account(session, str(account_id))
+        account.statement_timezone = payload.statement_timezone
+        session.commit()
+        return account
+
+    @application.get("/api/v1/accounts/{account_id}/reconciliations", tags=["Reconciliation"])
+    def list_reconciliations(account_id: UUID, session: DatabaseSession):
+        return reconciliation.list_periods(session, get_account(session, account_id))
+
+    @application.post(
+        "/api/v1/reconciliations/{reconciliation_id}/accept-adjustment", tags=["Reconciliation"]
+    )
+    def accept_adjustment(
+        reconciliation_id: UUID, payload: AdjustmentDecision, session: DatabaseSession
+    ):
+        return reconciliation.decide(
+            session, str(reconciliation_id), payload.signature, payload.reason
+        )
+
+    @application.post(
+        "/api/v1/reconciliations/{reconciliation_id}/reverse-adjustment", tags=["Reconciliation"]
+    )
+    def reverse_adjustment(
+        reconciliation_id: UUID, payload: AdjustmentDecision, session: DatabaseSession
+    ):
+        return reconciliation.decide(
+            session, str(reconciliation_id), payload.signature, payload.reason, reverse=True
+        )
+
+    @application.get("/api/v1/accounts/{account_id}/projection", tags=["Reports"])
+    def read_projection(account_id: UUID, at: Instant, session: DatabaseSession):
+        return reconciliation.projection(session, get_account(session, account_id), at)
 
     @application.get(
         "/api/v1/accounts/{account_id}/cash-balances",

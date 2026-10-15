@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { api, errorMessage } from "./api";
+import { api, errorMessage, localOffset } from "./api";
 import type { Account } from "./api";
 import { Notice } from "./Notice";
 
@@ -138,6 +138,7 @@ export function BalanceForm({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [timed, setTimed] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -150,6 +151,7 @@ export function BalanceForm({
         as_of_date: date,
         amount: String(data.get("amount")).trim(),
         note: String(data.get("note")).trim() || null,
+        ...(timed ? { effective_at: `${date}T${String(data.get("time"))}${String(data.get("time")).length === 5 ? ":00" : ""}${String(data.get("offset"))}` } : {}),
       });
       onSaved(date);
     } catch (failure) {
@@ -195,6 +197,19 @@ export function BalanceForm({
             Use a decimal point, without thousands separators. Negative balances
             are allowed.
           </p>
+          <label className="check-label wide">
+            <input type="checkbox" checked={timed} onChange={(event) => setTimed(event.target.checked)} />
+            Use this balance as a timed reference checkpoint
+          </label>
+          {timed && <>
+            <label>Checkpoint time
+              <input name="time" type="time" step="1" defaultValue="12:00:00" required />
+            </label>
+            <label>Checkpoint UTC offset
+              <input name="offset" defaultValue={localOffset()} required pattern="[+-][0-9]{2}:[0-9]{2}" placeholder="+02:00" />
+            </label>
+            <p className="form-note wide">Confirm the booked cash balance including all booked movements up to and including this instant, excluding pending movements. Check the UTC offset for that date, including daylight saving.</p>
+          </>}
           <label className="wide">
             Note (optional)
             <textarea
@@ -205,9 +220,10 @@ export function BalanceForm({
             />
           </label>
           <div className="subtle-note wide">
-            A confirmation preserves existing evidence. If another balance for
-            the same date differs, the report will flag a conflict. It does not
-            fill missing transactions or reconcile your history.
+            A confirmation preserves existing evidence and does not fill missing
+            transactions. Timed checkpoints let you review differences and approve
+            ghost adjustments below. Conflicting amounts at the same checkpoint
+            require investigation.
           </div>
           <label className="check-label wide">
             <input type="checkbox" required />I confirm this is the account

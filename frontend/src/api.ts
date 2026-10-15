@@ -6,6 +6,7 @@ export interface Account {
   currency_code: string;
   revolut_product: "Current" | "Savings" | null;
   created_at: string;
+  statement_timezone: string | null;
 }
 
 export type AccountCreate = Pick<
@@ -24,6 +25,8 @@ export interface Balance {
   source_timestamp: string | null;
   note: string | null;
   recorded_at: string;
+  effective_at: string | null;
+  effective_offset: string | null;
 }
 
 export interface AccountReport {
@@ -38,6 +41,7 @@ export interface AccountReport {
     "user_confirmed" | "source_reported" | "missing" | "conflicted";
   source: "manual" | "revolut" | null;
   source_timestamp: string | null;
+  balance_effective_at: string | null;
   observation_ids: string[];
   carried_forward: boolean;
   issues: string[];
@@ -136,6 +140,49 @@ export interface CommitResult {
   already_imported: boolean;
 }
 
+export interface Checkpoint {
+  id: string;
+  amount: string;
+  effective_at: string;
+  effective_offset: string;
+}
+
+export interface Reconciliation {
+  id: string;
+  currency_code: string;
+  opening: Checkpoint;
+  closing: Checkpoint;
+  state: "reconciled" | "unresolved" | "needs_review" | "blocked" | "superseded";
+  current: boolean;
+  movement_count: number;
+  real_total: string;
+  expected_close: string | null;
+  required_adjustment: string | null;
+  active_adjustment: string;
+  difference: string | null;
+  signature: string;
+  issues: string[];
+  evidence: {
+    imports: { id: string; observed_start: string | null; observed_end: string | null;
+      warnings: string[]; decisions: { row_id: string; action: string; transaction_id: string | null }[] }[];
+    pending_rows: number;
+    excluded_rows: number;
+    statement_timezone: string | null;
+  };
+  history: { id: string; amount: string; state: string; action: string; reason: string;
+    approved_at: string; actor: string; replaces_id: string | null }[];
+}
+
+export interface Projection {
+  at: string;
+  amount: string | null;
+  status: "confirmed" | "calculated" | "unavailable";
+  checkpoint: Checkpoint | null;
+  real_total: string;
+  movement_count: number;
+  issues: string[];
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -213,8 +260,20 @@ export const api = {
       as_of_date: string;
       amount: string;
       note: string | null;
+      effective_at?: string;
     },
   ) => request<Balance>(`/api/v1/accounts/${id}/cash-balances`, json(body)),
+  statementTimezone: (id: string, zone: string) =>
+    request<Account>(`/api/v1/accounts/${id}/statement-timezone`, {
+      ...json({ statement_timezone: zone }), method: "PUT",
+    }),
+  reconciliations: (id: string) =>
+    request<Reconciliation[]>(`/api/v1/accounts/${id}/reconciliations`),
+  adjustment: (id: string, signature: string, reason: string, reverse = false) =>
+    request<Reconciliation>(`/api/v1/reconciliations/${id}/${reverse ? "reverse" : "accept"}-adjustment`,
+      json({ signature, reason })),
+  projection: (id: string, at: string) =>
+    request<Projection>(`/api/v1/accounts/${id}/projection?at=${encodeURIComponent(at)}`),
   preview: (id: string, file: File) => {
     const body = new FormData();
     body.append("account_id", id);
@@ -265,4 +324,13 @@ export function calendarDate(value: string | null): string {
 export function today(): string {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+export function localOffset(): string {
+  const minutes = -new Date().getTimezoneOffset();
+  return `${minutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, "0")}:${String(Math.abs(minutes) % 60).padStart(2, "0")}`;
+}
+
+export function checkpointTime(checkpoint: Checkpoint): string {
+  return `${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "medium", timeZone: checkpoint.effective_offset === "+00:00" ? "UTC" : checkpoint.effective_offset }).format(new Date(checkpoint.effective_at))} UTC${checkpoint.effective_offset}`;
 }

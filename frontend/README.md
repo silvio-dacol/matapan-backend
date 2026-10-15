@@ -55,9 +55,36 @@ review to avoid changing the destination account midway through the work.
 - History coverage remains unverified even after a balance confirmation. The UI
   does not compute balances from an arbitrary subset of movements.
 
-This slice covers account cash and a partial financial picture. Reconciliation,
-synthetic adjustments and their revision, brokerage, FX, consolidated net worth,
-authentication, and self-hosted production packaging remain subsequent work.
+## Timed reference and reconciliation workflow
+
+Update backend dependencies and run `alembic upgrade head` before starting the API.
+In **Confirm balance**, check **Use this balance as a timed reference checkpoint**,
+then enter the time and the UTC offset that applied on that date. Confirm booked
+cash including movements up to that instant and excluding pending movements.
+Old date-only confirmations retain their original meaning.
+
+In **Balance reconciliation**, explicitly confirm the timezone used by your source
+statement's timestamps. **Calculate from checkpoint** shows a derived balance from
+the latest timed checkpoint and subsequent accepted movements, without changing
+the confirmed amount. The account cash card remains a dated evidence view.
+
+Two timed checkpoints expose an interval with its real movements, expected balance,
+remaining difference, and proposed ghost amount. Review coverage, duplicate
+decisions, and pending/skipped rows; enter a reason, check the approval box, and
+confirm the proposal. To investigate, leave it unresolved and obtain missing data.
+
+Late imports automatically recalculate the proposal and mark changed approvals as
+needing review. Confirm a replacement or a zero proposal to retire the old ghost.
+**Retire approved ghost** also supports voluntary reversal. Audit history remains;
+ghosts are never listed as imported real transactions or added to a confirmed
+balance. A newly inserted intermediate checkpoint requires retirement of an old
+spanning ghost before reviewing the new intervals.
+
+Missing timezone mappings, ambiguous/nonexistent daylight-saving times, or conflicting
+confirmations at one instant block the affected calculations. Coverage remains
+unverified even after accepting a ghost. Manual transaction entry, conflict/time
+correction, brokerage, FX, consolidated net worth, authentication, and self-hosted
+production packaging remain subsequent work.
 The development and preview servers bind to loopback.
 
 ## Verification
@@ -79,7 +106,8 @@ elsewhere. Set `MATAPAN_TEST_PYTHON` to use another Python environment with Mata
 installed. Windows tests use installed Microsoft Edge in headless mode. On other
 platforms, install Playwright's Chromium with `npx playwright install chromium`.
 
-Desktop/mobile tests cover preview versus commit, exact reimport, reviewed
+Desktop/mobile tests cover timed checkpoints, ghost revision and zero retirement,
+checkpoint projections, preview versus commit, exact reimport, reviewed
 overlaps and source provenance, invalid-row decisions, cancellation, exact large
 amounts, dated confirmation, past reports, conflicting balances, persistence after
 reload, preview expiry, concurrent-import recovery, and connection recovery.

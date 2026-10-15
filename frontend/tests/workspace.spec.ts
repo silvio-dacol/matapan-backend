@@ -66,6 +66,63 @@ test("keeps every money digit and distinguishes unknown from zero", () => {
   expect(money(null, "EUR")).toBe("Not available");
 });
 
+test("confirms timed references and reviews a ghost through late imports to zero", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await createAccount(page, "Checkpoint EUR");
+  async function timedBalance(amount: string, date: string) {
+    await page.getByRole("button", { name: "Confirm balance", exact: true }).click();
+    await page.getByLabel("Actual balance (EUR)").fill(amount);
+    await page.getByLabel("Balance date", { exact: true }).fill(date);
+    await page.getByLabel("Use this balance as a timed reference checkpoint").check();
+    await page.getByLabel("Checkpoint time", { exact: true }).fill("00:00:00");
+    await page.getByLabel("Checkpoint UTC offset", { exact: true }).fill("+00:00");
+    await page.getByLabel("I confirm this is the account balance for the stated date.").check();
+    await page.getByRole("button", { name: "Save confirmed balance", exact: true }).click();
+    await expect(page.locator(".balance-value")).toContainText(amount);
+  }
+  await timedBalance("100", "2025-01-01");
+  await page.getByLabel("Statement timezone", { exact: true }).fill("UTC");
+  await page.getByRole("button", { name: "Confirm statement timezone", exact: true }).click();
+  await expect(page.getByText("Saved: UTC", { exact: false })).toBeVisible();
+  await timedBalance("190", "2025-02-01");
+  const period = page.locator(".reconciliation-period");
+  await expect(period).toHaveCount(1);
+  await expect(period.locator("dd").last()).toHaveText("90.00 EUR");
+  async function acceptGhost() {
+    await period.getByLabel("Reason for adjustment decision").fill("Synthetic missing statement data");
+    await period.getByLabel("I reviewed these checkpoints, movements, and the proposed ghost decision.").check();
+    await period.getByRole("button", { name: "Confirm proposed ghost amount", exact: true }).click();
+    await expect(period.getByText("reconciled", { exact: true })).toBeVisible();
+  }
+  await acceptGhost();
+  async function lateImport(amount: string, day: string) {
+    const csv = "Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance\n" +
+      `Topup,Current,2025-01-${day} 12:00:00,2025-01-${day} 12:00:00,Synthetic late movement,${amount},0,EUR,COMPLETED,\n`;
+    await page.getByRole("button", { name: "Import statement", exact: true }).click();
+    await page.getByLabel("Choose Revolut CSV").setInputFiles({ name: `synthetic-${day}.csv`, mimeType: "text/csv", buffer: Buffer.from(csv) });
+    await page.getByRole("button", { name: "Preview statement", exact: true }).click();
+    await confirmImport(page);
+  }
+  await lateImport("60", "10");
+  await expect(period.getByText("needs review", { exact: true })).toBeVisible();
+  await expect(period.locator("dd").last()).toHaveText("30.00 EUR");
+  await acceptGhost();
+  await lateImport("30", "20");
+  await expect(period.getByText("needs review", { exact: true })).toBeVisible();
+  await expect(period.locator("dd").last()).toHaveText("0.00 EUR");
+  await acceptGhost();
+  await expect(period.getByRole("button", { name: "Retire approved ghost" })).toHaveCount(0);
+  await expect(period.getByText("Adjustment audit history (3)")).toBeVisible();
+  await expect(page.locator(".activity-panel tbody tr")).toHaveCount(2);
+  await page.getByLabel("Calculate balance at", { exact: true }).fill("2025-02-02T00:00");
+  await page.getByLabel("Calculation UTC offset", { exact: true }).fill("+00:00");
+  await page.getByRole("button", { name: "Calculate from checkpoint" }).click();
+  await expect(page.locator(".projection-result .amount")).toHaveText("190.00 EUR · calculated");
+  expect(errors).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 test("imports, reviews overlaps, preserves duplicate provenance, and confirms a dated balance", async ({
   page,
 }) => {
